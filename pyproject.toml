@@ -23,6 +23,7 @@ classifiers=[
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
@@ -43,17 +44,18 @@ odim = "xradar.io.backends:OdimBackendEntrypoint"
 rainbow = "xradar.io.backends:RainbowBackendEntrypoint"
 hpl = "xradar.io.backends:HPLBackendEntrypoint"
 nexradlevel2 = "xradar.io.backends:NexradLevel2BackendEntrypoint"
+argentina_bufr = "xradar.io.backends:ArgentinaBufrBackendEntrypoint"
 datamet = "xradar.io.backends:DataMetBackendEntrypoint"
 metek = "xradar.io.backends:MRRBackendEntrypoint"
 uf = "xradar.io.backends:UFBackendEntrypoint"
 
 [build-system]
-requires = [
-    "setuptools>=77",
-    "wheel",
-    "setuptools_scm[toml]>=8.0",
-]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "xradar.io.backends._nexrad_rust"
+manifest-path = "rust/Cargo.toml"
 
 [tool.setuptools.packages.find]
 include = ["xradar*"]
