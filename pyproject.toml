@@ -49,12 +49,12 @@ metek = "xradar.io.backends:MRRBackendEntrypoint"
 uf = "xradar.io.backends:UFBackendEntrypoint"
 
 [build-system]
-requires = [
-    "setuptools>=77",
-    "wheel",
-    "setuptools_scm[toml]>=8.0",
-]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "xradar.io.backends._nexrad_rust"
+manifest-path = "rust/Cargo.toml"
 
 [tool.setuptools.packages.find]
 include = ["xradar*"]
