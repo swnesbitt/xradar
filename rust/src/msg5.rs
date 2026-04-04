@@ -135,8 +135,8 @@ impl Msg5Data {
         let dop_vel_res = cursor.read_u8()?;
         let pulse_width = cursor.read_u8()?;
 
-        // Skip 2 bytes (spare)
-        cursor.set_position(cursor.position() + 2);
+        // spare_7_8: 4 bytes (HW 7-8 reserved)
+        cursor.set_position(cursor.position() + 4);
 
         let vcp_sequencing = if cursor.position() as usize + 2 <= data.len() {
             cursor.read_u16::<BigEndian>()?
@@ -150,9 +150,13 @@ impl Msg5Data {
             0
         };
 
-        // Skip to elevation data (offset 40 bytes from start of MSG 5 payload)
-        // The MSG 5 has some spare/reserved bytes between the header and elevation data
-        let elev_data_offset = 40;
+        // spare_11: 2 bytes (HW 11 reserved)
+        if cursor.position() as usize + 2 <= data.len() {
+            cursor.set_position(cursor.position() + 2);
+        }
+
+        // Elevation data starts right after the MSG_5 header (22 bytes total)
+        let elev_data_offset = cursor.position() as usize;
         let elev_record_size = 46; // Each elevation record is 46 bytes
 
         let mut elevation_data = Vec::new();
@@ -184,16 +188,16 @@ impl Msg5Data {
     fn parse_elevation(data: &[u8]) -> Result<ElevationData, NexradError> {
         let mut cursor = Cursor::new(data);
 
+        // Layout matches Python MSG_5_ELEV exactly (46 bytes, no padding):
+        // BIN2(2) + CODE1(1) + CODE1(1) + CODE1(1) + UINT1(1) + UINT2(2) + CODE2(2)
+        // + SINT2(2)*6 + CODE2(2) + UINT2(2)*2 + CODE2(2) + CODE2(2) + UINT2(2)*2
+        // + spare(2) + CODE2(2) + UINT2(2)*2 + spare(2)
         let elevation_angle_raw = cursor.read_u16::<BigEndian>()?;
         let elevation_angle = elevation_angle_raw as f32 * ELEV_ANGLE_SCALE;
         let channel_config = cursor.read_u8()?;
         let waveform_type = cursor.read_u8()?;
         let super_resolution = cursor.read_u8()?;
-        // Skip 1 byte spare
-        cursor.set_position(cursor.position() + 1);
         let prf_number = cursor.read_u8()?;
-        // Skip 1 byte spare
-        cursor.set_position(cursor.position() + 1);
         let prf_pulse_count = cursor.read_u16::<BigEndian>()?;
         let azimuth_rate = cursor.read_u16::<BigEndian>()?;
         let ref_thresh = cursor.read_u16::<BigEndian>()?;
@@ -209,9 +213,12 @@ impl Msg5Data {
         let edge_angle_2 = cursor.read_u16::<BigEndian>()?;
         let dop_prf_num_2 = cursor.read_u16::<BigEndian>()?;
         let dop_prf_pulse_count_2 = cursor.read_u16::<BigEndian>()?;
+        // spare_2: 2 bytes
+        cursor.set_position(cursor.position() + 2);
         let edge_angle_3 = cursor.read_u16::<BigEndian>()?;
         let dop_prf_num_3 = cursor.read_u16::<BigEndian>()?;
         let dop_prf_pulse_count_3 = cursor.read_u16::<BigEndian>()?;
+        // spare_3: 2 bytes (end of record)
 
         Ok(ElevationData {
             elevation_angle,

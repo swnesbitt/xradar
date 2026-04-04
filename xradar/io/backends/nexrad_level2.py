@@ -2345,20 +2345,25 @@ def open_nexradlevel2_datatree(
         else:
             _rust_data = None
 
+        _rust_ok = False
         if _rust_data is not None:
-            _rust_nex = NexradRustFile(_rust_data, loaddata=True)
-            act_sweeps = _rust_nex.num_sweeps
-            incomplete = _rust_nex.incomplete_sweeps
-            msg_5 = _rust_nex.msg_5
-            if msg_5:
-                exp_sweeps = msg_5["number_elevation_cuts"]
-                elev_data = msg_5.get("elevation_data", [])
-            else:
-                exp_sweeps = 0
-                elev_data = []
-        else:
-            # Fallback for unsupported input types
-            _HAS_RUST_local = False
+            try:
+                _rust_nex = NexradRustFile(_rust_data, loaddata=True)
+                act_sweeps = _rust_nex.num_sweeps
+                incomplete = _rust_nex.incomplete_sweeps
+                msg_5 = _rust_nex.msg_5
+                if msg_5:
+                    exp_sweeps = msg_5["number_elevation_cuts"]
+                    elev_data = msg_5.get("elevation_data", [])
+                else:
+                    exp_sweeps = 0
+                    elev_data = []
+                _rust_ok = True
+            except (ValueError, OSError):
+                pass
+
+        if not _rust_ok:
+            # Fallback to Python parser
             with NEXRADLevel2File(filename_or_obj, loaddata=False) as nex:
                 act_sweeps = len(nex.msg_31_data_header)
                 incomplete = nex.incomplete_sweeps
