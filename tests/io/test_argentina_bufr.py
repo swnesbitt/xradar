@@ -18,6 +18,14 @@ BUFR_DIR = Path("/Users/snesbitt/data/bufr_relampago/00/0457")
 DBZH_FILE = next(BUFR_DIR.glob("*_DBZH_*.BUFR.gz"), None)
 VRADH_FILE = next(BUFR_DIR.glob("*_VRAD_*.BUFR.gz"), None)
 
+# Second volume — scan_01 (surveillance, 15 sweeps, 450 m bins)
+BUFR_DIR2 = Path("/Users/snesbitt/data/bufr_relampago/00/0620")
+
+pytestmark_vol2 = pytest.mark.skipif(
+    not BUFR_DIR2.exists(),
+    reason="RELAMPAGO vol2 data not available",
+)
+
 pytestmark = pytest.mark.skipif(
     not BUFR_DIR.exists(),
     reason="RELAMPAGO test data not available at expected path",
@@ -229,3 +237,164 @@ class TestXarrayEngine:
         assert elev1 > elev0
         ds0.close()
         ds1.close()
+
+    def test_open_dataset_file_like(self):
+        """Backend entrypoint should accept file-like objects."""
+        import io
+        import xarray as xr
+        with open(DBZH_FILE, "rb") as f:
+            buf = io.BytesIO(f.read())
+        ds = xr.open_dataset(buf, engine="argentina_bufr", group="sweep_0")
+        assert "DBZH" in ds
+        ds.close()
+
+    def test_open_dataset_invalid_group_raises(self):
+        import xarray as xr
+        with pytest.raises(ValueError):
+            xr.open_dataset(DBZH_FILE, engine="argentina_bufr", group="bad_group")
+
+    def test_open_dataset_group_out_of_range_raises(self):
+        import xarray as xr
+        with pytest.raises(ValueError):
+            xr.open_dataset(DBZH_FILE, engine="argentina_bufr", group="sweep_99")
+
+
+class TestSweepGeometryFields:
+    """Validate geometry fields not otherwise checked."""
+
+    @pytest.fixture(scope="class")
+    def dbzh_bufr(self):
+        with open(DBZH_FILE, "rb") as f:
+            return BufrRustFile(f.read())
+
+    def test_rotation_clockwise(self, dbzh_bufr):
+        g = dbzh_bufr.get_sweep_geometry(0)
+        assert g["rotation_clockwise"] is True
+
+    def test_start_azimuth_sweep0(self, dbzh_bufr):
+        az = dbzh_bufr.get_start_azimuth(0)
+        assert 0.0 <= az < 360.0
+        # Should match geometry dict
+        g = dbzh_bufr.get_sweep_geometry(0)
+        assert az == pytest.approx(g["start_azimuth_deg"], abs=0.1)
+
+    def test_geometry_all_sweeps(self, dbzh_bufr):
+        for i in range(dbzh_bufr.num_sweeps):
+            g = dbzh_bufr.get_sweep_geometry(i)
+            assert g["n_bins"] > 0
+            assert g["bin_size_m"] > 0
+            assert g["n_azimuths"] == 360
+            assert 0.0 < g["elevation_deg"] < 90.0
+
+
+class TestDualPolMoments:
+    """Verify dual-polarization moment files are readable.
+
+    Physical range checks are applied only to moments tightly bounded by
+    physics (DBZV, RHOHV, PHIDP, CM).  ZDR and KDP are stored as
+    pre-computed float64 values without QC, so noise-driven outliers are
+    expected; only shape and dtype are verified for those moments.
+    """
+
+    # (moment, glob, vmin, vmax) — vmin/vmax=None means skip range check
+    MOMENTS = [
+        ("DBZV",  "*_DBZV_*.BUFR.gz",  -50.0, 80.0),
+        ("ZDR",   "*_ZDR_*.BUFR.gz",   None,  None),
+        ("RHOHV", "*_RHOHV_*.BUFR.gz",  0.0,  1.05),
+        ("KDP",   "*_KDP_*.BUFR.gz",   None,  None),
+        ("PHIDP", "*_PHIDP_*.BUFR.gz",  0.0, 360.0),
+        ("CM",    "*_CM_*.BUFR.gz",     0.0,  16.0),
+    ]
+
+    @pytest.mark.parametrize("moment,glob,vmin,vmax", MOMENTS)
+    def test_moment_readable(self, moment, glob, vmin, vmax):
+        file = next(BUFR_DIR.glob(glob), None)
+        if file is None:
+            pytest.skip(f"No file matching {glob}")
+        with open(file, "rb") as f:
+            bufr = BufrRustFile(f.read())
+        names = bufr.get_sweep_moment_names(0)
+        assert moment in names
+        arr = bufr.get_moment_data(0, moment)
+        assert arr.shape[0] == 360
+        assert arr.dtype == np.float64
+        assert np.any(np.isfinite(arr)), f"{moment} has no finite values"
+        if vmin is not None:
+            valid = arr[np.isfinite(arr)]
+            assert valid.min() >= vmin
+            assert valid.max() <= vmax
+
+    def test_all_moments_same_n_azimuths(self):
+        """All moment files for the same sweep must have the same number of azimuths."""
+        n_az_values = set()
+        for fp in sorted(BUFR_DIR.glob("*.BUFR.gz")):
+            with open(fp, "rb") as f:
+                bufr = BufrRustFile(f.read())
+            n_az_values.add(bufr.get_n_azimuths(0))
+        assert len(n_az_values) == 1, f"Inconsistent n_azimuths across moment files: {n_az_values}"
+
+
+class TestOpenArgentinaBufrDatatreeOptions:
+    """Test optional parameters of open_argentina_bufr_datatree."""
+
+    def test_site_coords_false(self):
+        dtree = open_argentina_bufr_datatree(BUFR_DIR, site_coords=False)
+        assert "latitude" not in dtree.coords
+        assert "longitude" not in dtree.coords
+
+    def test_reindex_angle(self):
+        dtree = open_argentina_bufr_datatree(BUFR_DIR, reindex_angle=True)
+        ds = dtree["sweep_0"].ds
+        az = ds["azimuth"].values
+        # Should be regularly spaced at 1.0° resolution
+        diffs = np.diff(az)
+        assert np.allclose(diffs, 1.0, atol=1e-3)
+        assert len(az) == 360
+
+    def test_list_of_paths_input(self):
+        """Explicit file list should produce same result as directory."""
+        file_list = sorted(BUFR_DIR.glob("*.BUFR.gz"))
+        dtree = open_argentina_bufr_datatree(file_list)
+        sweep_keys = [k for k in dtree.children if k.startswith("sweep_")]
+        assert len(sweep_keys) == 3
+
+    def test_sweep_list_multiple(self):
+        dtree = open_argentina_bufr_datatree(BUFR_DIR, sweep=[0, 2])
+        assert "sweep_0" in dtree.children
+        assert "sweep_1" in dtree.children  # renumbered from original sweep_2
+        assert "sweep_2" not in dtree.children
+
+    def test_empty_dir_raises(self, tmp_path):
+        with pytest.raises((FileNotFoundError, RuntimeError)):
+            open_argentina_bufr_datatree(tmp_path)
+
+
+@pytestmark_vol2
+class TestVol2SurveillanceScan:
+    """Second volume: scan_01, 15 sweeps, 450 m bin spacing."""
+
+    @pytest.fixture(scope="class")
+    def dtree2(self):
+        return open_argentina_bufr_datatree(BUFR_DIR2)
+
+    def test_num_sweeps(self, dtree2):
+        sweep_keys = [k for k in dtree2.children if k.startswith("sweep_")]
+        assert len(sweep_keys) == 15
+
+    def test_bin_size_450m(self, dtree2):
+        ds = dtree2["sweep_0"].ds
+        r = ds["range"].values
+        assert (r[1] - r[0]) == pytest.approx(450.0, abs=0.5)
+
+    def test_elevations_ascending(self, dtree2):
+        elevs = [dtree2[f"sweep_{i}"].ds.attrs["fixed_angle"] for i in range(15)]
+        assert sorted(elevs) == elevs
+
+    def test_high_elevation_sweep(self, dtree2):
+        # Last sweep should be near 30°
+        elev = dtree2["sweep_14"].ds.attrs["fixed_angle"]
+        assert 25.0 < elev < 35.0
+
+    def test_same_site_metadata(self, dtree2):
+        assert dtree2.attrs["instrument_name"] == "RMA1"
+        assert abs(dtree2.attrs["latitude"] - (-31.4413)) < 0.01

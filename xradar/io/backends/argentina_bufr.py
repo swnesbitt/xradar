@@ -29,6 +29,8 @@ from xarray.backends import BackendEntrypoint
 from xarray.backends.common import AbstractDataStore, BackendArray
 from xarray.core import indexing
 
+from xradar.model import get_altitude_attrs, get_latitude_attrs, get_longitude_attrs
+
 try:
     from xradar.io.backends._nexrad_rust import BufrRustFile
 
@@ -91,15 +93,22 @@ class ArgentinaBufrSweepStore(AbstractDataStore):
             if data.shape[1] > max_n_bins:
                 max_n_bins = data.shape[1]
 
-        # Build azimuth coordinate: evenly spaced from start_azimuth
+        # The Argentine processing pipeline stores data in a fixed physical order
+        # (0°→360°) regardless of where the antenna started rotating.
+        # start_azimuth_deg is metadata only; do not use it to reorder rows.
         az_step = 360.0 / n_az
-        azimuths = (g["start_azimuth_deg"] + np.arange(n_az) * az_step) % 360.0
+        azimuths = np.arange(n_az) * az_step
 
         # Build range coordinate using canonical geometry bins
         ranges = g["bin_offset_m"] + np.arange(max_n_bins) * g["bin_size_m"]
 
         # Elevation: uniform for PPI
         elevations = np.full(n_az, g["elevation_deg"], dtype=np.float32)
+
+        # Per-ray times: linearly interpolated between sweep start and end
+        t0 = np.datetime64(g["start_time"].replace("Z", ""), "ns")
+        t1 = np.datetime64(g["end_time"].replace("Z", ""), "ns")
+        ray_times = np.linspace(0, 1, n_az) * (t1 - t0) + t0
 
         variables = {
             "azimuth": xr.Variable(
@@ -121,6 +130,41 @@ class ArgentinaBufrSweepStore(AbstractDataStore):
                     "meters_to_center_of_first_gate": float(g["bin_offset_m"]),
                     "meters_between_gates": float(g["bin_size_m"]),
                 },
+            ),
+            "time": xr.Variable(
+                ("azimuth",),
+                ray_times,
+                attrs={"standard_name": "time"},
+            ),
+            "sweep_number": xr.Variable(
+                (),
+                np.int32(self._sweep_idx),
+                attrs={"units": "1", "standard_name": "sweep_number"},
+            ),
+            "sweep_fixed_angle": xr.Variable(
+                (),
+                np.float32(g["elevation_deg"]),
+                attrs={"units": "degrees", "standard_name": "beam_elevation_angle"},
+            ),
+            "sweep_mode": xr.Variable(
+                (),
+                "azimuth_surveillance",
+                attrs={"standard_name": "sweep_mode"},
+            ),
+            "latitude": xr.Variable(
+                (),
+                self._site_attrs.get("latitude", np.nan),
+                attrs=get_latitude_attrs(),
+            ),
+            "longitude": xr.Variable(
+                (),
+                self._site_attrs.get("longitude", np.nan),
+                attrs=get_longitude_attrs(),
+            ),
+            "altitude": xr.Variable(
+                (),
+                self._site_attrs.get("altitude", np.nan),
+                attrs=get_altitude_attrs(),
             ),
         }
 
@@ -262,7 +306,7 @@ class ArgentinaBufrBackendEntrypoint(BackendEntrypoint):
             decode_coords=decode_coords,
             drop_variables=drop_variables,
         )
-        ds = ds.set_coords(["azimuth", "elevation", "range"])
+        ds = ds.set_coords(["azimuth", "elevation", "range", "time", "latitude", "longitude", "altitude"])
         return ds
 
 
@@ -399,7 +443,7 @@ def open_argentina_bufr_datatree(
             decode_coords=True,
             drop_variables=None,
         )
-        ds = ds.set_coords(["azimuth", "elevation", "range"])
+        ds = ds.set_coords(["azimuth", "elevation", "range", "time", "latitude", "longitude", "altitude"])
 
         if reindex_angle:
             ds = _reindex_azimuth(ds)
@@ -479,7 +523,13 @@ def _build_elevation_index(bufr_files, moments_filter=None):
 
 
 def _reindex_azimuth(ds, resolution=1.0):
-    """Reindex azimuths to a regular grid at given resolution (degrees)."""
+    """Reindex azimuths to a regular grid at given resolution (degrees).
+
+    The raw azimuth coordinate may start at an arbitrary angle and wrap around
+    360°, making it non-monotonic.  We sort by azimuth first so that xarray's
+    ``reindex`` (which requires a monotonic index) works correctly.
+    """
+    ds = ds.sortby("azimuth")
     n = int(round(360.0 / resolution))
     target_az = np.arange(n) * resolution
     return ds.reindex(
