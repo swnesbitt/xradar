@@ -464,15 +464,26 @@ def open_argentina_bufr_datatree(
 
 
 def _collect_bufr_files(path):
-    """Return sorted list of .BUFR.gz file paths from a directory or file list."""
+    """Return sorted list of BUFR file paths from a directory or explicit list.
+
+    Accepts both compressed (``.BUFR.gz``) and uncompressed (``.BUFR``) files.
+    Compressed files take priority when both are present in the same directory.
+    """
     if isinstance(path, (list, tuple)):
         return [Path(p) for p in path]
     path = Path(path)
     if path.is_dir():
-        files = sorted(path.glob("*.BUFR.gz"))
-        if not files:
-            files = sorted(path.glob("*.bufr.gz"))
-        return files
+        # Try compressed first
+        for pattern in ("*.BUFR.gz", "*.bufr.gz"):
+            files = sorted(path.glob(pattern))
+            if files:
+                return files
+        # Fall back to uncompressed
+        for pattern in ("*.BUFR", "*.bufr"):
+            files = sorted(path.glob(pattern))
+            if files:
+                return files
+        return []
     # Single file
     return [path]
 
