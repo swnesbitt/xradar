@@ -58,6 +58,16 @@ Xradar is considered stable for the implemented readers and writers which have b
 * NexradLevel2
 * Rainbow
 * UF
+* BUFR Radares Meteorológicos Argentinos
+
+### Data Transformation and Alignment
+* Georeferencing (AEQD projection)
+* Angle Reindexing
+* Format Transformation support to CfRadial1 and CfRadial2
+
+### Rust Backend
+* NEXRAD Level 2
+* BUFR Radares Meteorológicos Argentinos
 
 ### Data Transformation and Alignment
 * Georeferencing (AEQD projection)
