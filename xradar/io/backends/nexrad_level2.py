@@ -1064,8 +1064,10 @@ MSG_1 = OrderedDict(
         ("radial_status", CODE2),  # 12-13
         ("elevation_angle", UINT2),  # 14-15
         ("elevation_number", UINT2),  # 16-17
-        ("sur_range_first", CODE2),  # 18-19
-        ("doppler_range_first", CODE2),  # 20-21
+        # range to first gate is a signed halfword; negative for split
+        # cuts (e.g. -375 m on legacy Doppler sweeps)
+        ("sur_range_first", SINT2),  # 18-19
+        ("doppler_range_first", SINT2),  # 20-21
         ("sur_range_step", CODE2),  # 22-23
         ("doppler_range_step", CODE2),  # 24-25
         ("sur_nbins", UINT2),  # 26-27
