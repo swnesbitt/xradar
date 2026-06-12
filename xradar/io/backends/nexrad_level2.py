@@ -1752,6 +1752,10 @@ class NexradLevel2Store(AbstractDataStore):
         attrs = {key: mapping[key] for key in moment_attrs if key in mapping}
         attrs["scale_factor"] = 1.0 / var["scale"]
         attrs["add_offset"] = -var["offset"] / var["scale"]
+        # raw code 0 is "below signal threshold" and must not decode to a
+        # physical value; code 1 ("range folded") still needs dedicated
+        # handling, see discussion in the PR.
+        attrs["_FillValue"] = 0
         attrs["coordinates"] = (
             "elevation azimuth range latitude longitude altitude time"
         )
